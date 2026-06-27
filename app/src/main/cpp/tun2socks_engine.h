@@ -140,6 +140,9 @@ typedef struct {
     volatile int64_t ul_bytes;
     volatile int64_t dl_bytes;
 
+    /* set to 1 when a download read is skipped due to empty bucket */
+    int              dl_starved;
+
     /* JNI */
     JavaVM          *jvm;
     jobject          vpn_ref;        /* global ref to Tun2SocksEngine  */

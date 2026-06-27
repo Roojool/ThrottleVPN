@@ -635,16 +635,24 @@ static void handle_socket_event(engine_t *e, int fd, uint32_t events) {
             return;
         }
 
-        int n = (int)recv(fd, buf, sizeof(buf), 0);
+        /* Gate read by available download tokens to enforce the cap.
+         * Previously we read up to 65 KB then slept — now we only
+         * read what the bucket allows, so pacing is smooth.          */
+        int64_t avail = rate_limiter_available(&e->dl_limiter);
+        if (avail <= 0) {
+            e->dl_starved = 1;   /* main loop will yield */
+            pthread_mutex_unlock(&e->tcp_lock);
+            return;
+        }
+        size_t max_read = sizeof(buf);
+        if (avail < (int64_t)max_read) max_read = (size_t)avail;
+
+        int n = (int)recv(fd, buf, max_read, 0);
         if (n > 0) {
             ts->last_active = time(NULL);
-
-            /* rate-limit download */
             int small = (n <= SMALL_PKT_THRESHOLD);
-            int64_t wait = rate_limiter_consume(&e->dl_limiter, n, small);
-            if (wait > 0) usleep((useconds_t)wait);
+            rate_limiter_consume(&e->dl_limiter, n, small);
             __sync_fetch_and_add(&e->dl_bytes, n);
-
             write_tcp(e, ts, TF_PSH | TF_ACK, buf, n);
         } else if (n == 0) {
             /* Remote closed */
@@ -665,13 +673,20 @@ static void handle_socket_event(engine_t *e, int fd, uint32_t events) {
     pthread_mutex_lock(&e->udp_lock);
     udp_session_t *us = udp_find_by_fd(e, fd);
     if (us && (events & EPOLLIN)) {
-        int n = (int)recv(fd, buf, sizeof(buf), 0);
+        int64_t avail = rate_limiter_available(&e->dl_limiter);
+        if (avail <= 0) {
+            e->dl_starved = 1;
+            pthread_mutex_unlock(&e->udp_lock);
+            return;
+        }
+        size_t max_read = sizeof(buf);
+        if (avail < (int64_t)max_read) max_read = (size_t)avail;
+
+        int n = (int)recv(fd, buf, max_read, 0);
         if (n > 0) {
             us->last_active = time(NULL);
-
             int small = (n <= SMALL_PKT_THRESHOLD);
-            int64_t wait = rate_limiter_consume(&e->dl_limiter, n, small);
-            if (wait > 0) usleep((useconds_t)wait);
+            rate_limiter_consume(&e->dl_limiter, n, small);
             __sync_fetch_and_add(&e->dl_bytes, n);
 
             if (us->src.version == 4)
@@ -790,6 +805,15 @@ static void *engine_loop(void *arg) {
                 /* ---- data from a real socket --------------------------- */
                 handle_socket_event(e, fd, events[i].events);
             }
+        }
+
+        /* When the download bucket is empty, yield for 2 ms.
+         * This prevents busy-spinning (level-triggered epoll would
+         * otherwise fire continuously for sockets with buffered
+         * data) while letting tokens refill smoothly.               */
+        if (e->dl_starved) {
+            e->dl_starved = 0;
+            usleep(2000);
         }
 
         /* periodic session cleanup */

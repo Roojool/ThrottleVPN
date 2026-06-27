@@ -88,6 +88,30 @@ int64_t rate_limiter_consume(rate_limiter_t *rl, int32_t bytes, int is_small) {
     return wait_us;
 }
 
+int64_t rate_limiter_available(rate_limiter_t *rl) {
+    pthread_mutex_lock(&rl->lock);
+
+    /* refill (same logic as consume) */
+    int64_t now = now_monotonic_ns();
+    int64_t elapsed_ns = now - rl->last_refill_ns;
+    if (elapsed_ns > 0 && rl->rate_per_sec > 0) {
+        int64_t added = (elapsed_ns * rl->rate_per_sec) / 1000000000LL;
+        if (added > 0) {
+            rl->tokens += added;
+            if (rl->tokens >= rl->capacity) {
+                rl->tokens = rl->capacity;
+                rl->last_refill_ns = now;
+            } else {
+                rl->last_refill_ns += (added * 1000000000LL) / rl->rate_per_sec;
+            }
+        }
+    }
+
+    int64_t result = rl->tokens;
+    pthread_mutex_unlock(&rl->lock);
+    return result;
+}
+
 void rate_limiter_destroy(rate_limiter_t *rl) {
     pthread_mutex_destroy(&rl->lock);
 }

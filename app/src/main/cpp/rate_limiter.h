@@ -9,7 +9,7 @@
  *
  * Tokens represent bytes.  The bucket refills at a steady rate
  * derived from the target bytes-per-second.  Burst capacity is
- * capped at 200 ms worth of tokens so short traffic spikes are
+ * capped at 20 ms worth of tokens so short traffic spikes are
  * absorbed without allowing sustained over-rate.
  *
  * Small packets (<= 128 B, typically ACKs / SYNs) consume half
@@ -40,6 +40,13 @@ void rate_limiter_update(rate_limiter_t *rl, int64_t bytes_per_second);
  *         The tokens are consumed regardless — the wait is advisory.
  */
 int64_t rate_limiter_consume(rate_limiter_t *rl, int32_t bytes, int is_small);
+
+/**
+ * Return the number of tokens (bytes) currently available after refill.
+ * Does NOT consume any tokens.  Use this to decide how many bytes to
+ * read from a socket before calling rate_limiter_consume().
+ */
+int64_t rate_limiter_available(rate_limiter_t *rl);
 
 void rate_limiter_destroy(rate_limiter_t *rl);
 
