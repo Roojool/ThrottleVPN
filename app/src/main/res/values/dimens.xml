@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="card_radius">16dp</dimen>
+    <dimen name="card_padding">20dp</dimen>
+    <dimen name="card_margin">14dp</dimen>
+    <dimen name="edit_radius">10dp</dimen>
+</resources>

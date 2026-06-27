@@ -1,0 +1,37 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches/build_file_checksums.ser
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Android Studio Navigation editor temp files
+.navigation/
+
+# Captures
+captures/
+
+# External native build folder generated in Android Studio 2.2 and later
+.externalNativeBuild
+.cxx/
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs, Places, etc.)
+google-services.json
+
+# Android Profiler
+*.hprof
+
+# app specific
+app/build/
+app/.cxx/

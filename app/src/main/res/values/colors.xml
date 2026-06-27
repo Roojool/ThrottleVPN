@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#0F0F1A</color>
+    <color name="surface">#1A1A2E</color>
+    <color name="surfaceVariant">#222240</color>
+    <color name="primary">#00BCD4</color>
+    <color name="primaryDark">#0097A7</color>
+    <color name="accent">#00E5FF</color>
+    <color name="uploadAccent">#B388FF</color>
+    <color name="textPrimary">#F0F0F0</color>
+    <color name="textSecondary">#7E8A9A</color>
+    <color name="statusGreen">#00E676</color>
+    <color name="statusRed">#FF5252</color>
+    <color name="statusAmber">#FFD740</color>
+    <color name="editFieldBg">#1C1C34</color>
+    <color name="editFieldStroke">#333358</color>
+</resources>

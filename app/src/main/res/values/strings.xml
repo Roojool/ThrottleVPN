@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ThrottleVPN</string>
+
+    <!-- Status -->
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_reconnecting">Reconnecting…</string>
+    <string name="status_error">Error</string>
+
+    <!-- Buttons -->
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="settings">Settings</string>
+    <string name="back">Back</string>
+    <string name="apply_caps">Apply Caps</string>
+    <string name="run_speed_test">Run Speed Test</string>
+    <string name="reset">Reset</string>
+
+    <!-- Cards -->
+    <string name="live_traffic">Live Traffic</string>
+    <string name="speed_test_title">Speed Test</string>
+    <string name="bandwidth_cap">Bandwidth Cap</string>
+    <string name="download">↓ Download</string>
+    <string name="upload">↑ Upload</string>
+    <string name="max_download">Max Download</string>
+    <string name="max_upload">Max Upload</string>
+    <string name="dl_cap">↓ Download Cap</string>
+    <string name="ul_cap">↑ Upload Cap</string>
+    <string name="manual_override">Manual Override</string>
+
+    <!-- Formats -->
+    <string name="mbps_fmt">%.1f Mbps</string>
+    <string name="mbps_fmt2">%.2f Mbps</string>
+    <string name="pct_fmt">%d%%</string>
+    <string name="zero_mbps">0.00 Mbps</string>
+    <string name="dash_mbps">— Mbps</string>
+    <string name="default_pct">90%</string>
+    <string name="speed_result" formatted="false">Done: ↓%.1f / ↑%.1f Mbps</string>
+    <string name="speed_error">Error: %s</string>
+
+    <!-- Hints -->
+    <string name="dl_mbps_hint">↓ Mbps</string>
+    <string name="ul_mbps_hint">↑ Mbps</string>
+
+    <!-- Settings -->
+    <string name="auto_start_boot">Auto-start on boot</string>
+    <string name="auto_reconnect">Auto-reconnect</string>
+    <string name="background_mode">Background mode</string>
+    <string name="persistent_notification">Persistent notification</string>
+</resources>
