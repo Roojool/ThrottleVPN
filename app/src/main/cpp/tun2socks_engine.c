@@ -290,48 +290,64 @@ static void write_tcp_v4(engine_t *e, tcp_session_t *s,
                           const uint8_t *payload, int pay_len) {
     const int ip_len  = 20;
     const int tcp_len = 20;
-    int total = ip_len + tcp_len + pay_len;
-    uint8_t pkt[MAX_PACKET_SIZE];
-    if (total > (int)sizeof(pkt)) return;
-    memset(pkt, 0, (size_t)total);
+    int mss = e->mtu - ip_len - tcp_len;
+    if (mss <= 0) mss = 1460;
 
-    /* --- IPv4 header ------------------------------------------------ */
-    ipv4_hdr_t *ip = (ipv4_hdr_t *)pkt;
-    ip->ver_ihl    = 0x45;
-    ip->total_len  = htons((uint16_t)total);
-    ip->ident      = htons((uint16_t)(s->our_seq & 0xFFFF));
-    ip->flags_frag = htons(0x4000);            /* DF */
-    ip->ttl        = 64;
-    ip->protocol   = 6;                        /* TCP */
-    ip->src_addr   = s->dst.a.v4;              /* swap */
-    ip->dst_addr   = s->src.a.v4;
-    ip->hdr_csum   = 0;
-    ip->hdr_csum   = checksum_compute(ip, ip_len);
+    int offset = 0;
+    do {
+        int chunk_len = pay_len - offset;
+        if (chunk_len > mss) chunk_len = mss;
+        
+        int total = ip_len + tcp_len + chunk_len;
+        uint8_t pkt[MAX_PACKET_SIZE];
+        if (total > (int)sizeof(pkt)) break;
+        memset(pkt, 0, (size_t)total);
 
-    /* --- TCP header ------------------------------------------------- */
-    tcp_hdr_t *tcp = (tcp_hdr_t *)(pkt + ip_len);
-    tcp->src_port  = s->dst_port;
-    tcp->dst_port  = s->src_port;
-    tcp->seq       = htonl(s->our_seq);
-    tcp->ack       = htonl(s->client_seq);
-    tcp->off_rsvd  = 0x50;                     /* offset = 5 words */
-    tcp->flags     = flags;
-    tcp->window    = htons(65535);
+        uint8_t chunk_flags = flags;
+        if (offset + chunk_len < pay_len) {
+            chunk_flags &= ~(TF_PSH | TF_FIN);
+        }
 
-    if (pay_len > 0 && payload) {
-        memcpy(pkt + ip_len + tcp_len, payload, (size_t)pay_len);
-    }
+        /* --- IPv4 header ------------------------------------------------ */
+        ipv4_hdr_t *ip = (ipv4_hdr_t *)pkt;
+        ip->ver_ihl    = 0x45;
+        ip->total_len  = htons((uint16_t)total);
+        ip->ident      = htons((uint16_t)(s->our_seq & 0xFFFF));
+        ip->flags_frag = htons(0x4000);            /* DF */
+        ip->ttl        = 64;
+        ip->protocol   = 6;                        /* TCP */
+        ip->src_addr   = s->dst.a.v4;              /* swap */
+        ip->dst_addr   = s->src.a.v4;
+        ip->hdr_csum   = 0;
+        ip->hdr_csum   = checksum_compute(ip, ip_len);
 
-    tcp->csum = 0;
-    tcp->csum = tcp_udp_csum_v4(s->dst.a.v4, s->src.a.v4, 6,
-                                 tcp, tcp_len + pay_len);
+        /* --- TCP header ------------------------------------------------- */
+        tcp_hdr_t *tcp = (tcp_hdr_t *)(pkt + ip_len);
+        tcp->src_port  = s->dst_port;
+        tcp->dst_port  = s->src_port;
+        tcp->seq       = htonl(s->our_seq);
+        tcp->ack       = htonl(s->client_seq);
+        tcp->off_rsvd  = 0x50;                     /* offset = 5 words */
+        tcp->flags     = chunk_flags;
+        tcp->window    = htons(65535);
 
-    write(e->tun_fd, pkt, (size_t)total);
+        if (chunk_len > 0 && payload) {
+            memcpy(pkt + ip_len + tcp_len, payload + offset, (size_t)chunk_len);
+        }
 
-    /* advance our seq */
-    if (flags & TF_SYN) s->our_seq++;
-    if (flags & TF_FIN) s->our_seq++;
-    s->our_seq += (uint32_t)pay_len;
+        tcp->csum = 0;
+        tcp->csum = tcp_udp_csum_v4(s->dst.a.v4, s->src.a.v4, 6,
+                                     tcp, tcp_len + chunk_len);
+
+        write(e->tun_fd, pkt, (size_t)total);
+
+        /* advance our seq for this chunk */
+        if (offset == 0 && (chunk_flags & TF_SYN)) s->our_seq++;
+        s->our_seq += (uint32_t)chunk_len;
+        if ((offset + chunk_len == pay_len) && (chunk_flags & TF_FIN)) s->our_seq++;
+
+        offset += chunk_len;
+    } while (offset < pay_len);
 }
 
 static void write_tcp_v6(engine_t *e, tcp_session_t *s,
@@ -339,40 +355,56 @@ static void write_tcp_v6(engine_t *e, tcp_session_t *s,
                           const uint8_t *payload, int pay_len) {
     const int ip_len  = 40;
     const int tcp_len = 20;
-    int total = ip_len + tcp_len + pay_len;
-    uint8_t pkt[MAX_PACKET_SIZE];
-    if (total > (int)sizeof(pkt)) return;
-    memset(pkt, 0, (size_t)total);
+    int mss = e->mtu - ip_len - tcp_len;
+    if (mss <= 0) mss = 1440;
 
-    ipv6_hdr_t *ip6 = (ipv6_hdr_t *)pkt;
-    ip6->ver_tc_flow   = htonl(0x60000000);
-    ip6->payload_len   = htons((uint16_t)(tcp_len + pay_len));
-    ip6->next_hdr      = 6;
-    ip6->hop_limit     = 64;
-    memcpy(ip6->src_addr, s->dst.a.v6, 16);
-    memcpy(ip6->dst_addr, s->src.a.v6, 16);
+    int offset = 0;
+    do {
+        int chunk_len = pay_len - offset;
+        if (chunk_len > mss) chunk_len = mss;
 
-    tcp_hdr_t *tcp = (tcp_hdr_t *)(pkt + ip_len);
-    tcp->src_port  = s->dst_port;
-    tcp->dst_port  = s->src_port;
-    tcp->seq       = htonl(s->our_seq);
-    tcp->ack       = htonl(s->client_seq);
-    tcp->off_rsvd  = 0x50;
-    tcp->flags     = flags;
-    tcp->window    = htons(65535);
+        int total = ip_len + tcp_len + chunk_len;
+        uint8_t pkt[MAX_PACKET_SIZE];
+        if (total > (int)sizeof(pkt)) break;
+        memset(pkt, 0, (size_t)total);
 
-    if (pay_len > 0 && payload)
-        memcpy(pkt + ip_len + tcp_len, payload, (size_t)pay_len);
+        uint8_t chunk_flags = flags;
+        if (offset + chunk_len < pay_len) {
+            chunk_flags &= ~(TF_PSH | TF_FIN);
+        }
 
-    tcp->csum = 0;
-    tcp->csum = tcp_udp_csum_v6(s->dst.a.v6, s->src.a.v6, 6,
-                                 tcp, tcp_len + pay_len);
+        ipv6_hdr_t *ip6 = (ipv6_hdr_t *)pkt;
+        ip6->ver_tc_flow   = htonl(0x60000000);
+        ip6->payload_len   = htons((uint16_t)(tcp_len + chunk_len));
+        ip6->next_hdr      = 6;
+        ip6->hop_limit     = 64;
+        memcpy(ip6->src_addr, s->dst.a.v6, 16);
+        memcpy(ip6->dst_addr, s->src.a.v6, 16);
 
-    write(e->tun_fd, pkt, (size_t)total);
+        tcp_hdr_t *tcp = (tcp_hdr_t *)(pkt + ip_len);
+        tcp->src_port  = s->dst_port;
+        tcp->dst_port  = s->src_port;
+        tcp->seq       = htonl(s->our_seq);
+        tcp->ack       = htonl(s->client_seq);
+        tcp->off_rsvd  = 0x50;
+        tcp->flags     = chunk_flags;
+        tcp->window    = htons(65535);
 
-    if (flags & TF_SYN) s->our_seq++;
-    if (flags & TF_FIN) s->our_seq++;
-    s->our_seq += (uint32_t)pay_len;
+        if (chunk_len > 0 && payload)
+            memcpy(pkt + ip_len + tcp_len, payload + offset, (size_t)chunk_len);
+
+        tcp->csum = 0;
+        tcp->csum = tcp_udp_csum_v6(s->dst.a.v6, s->src.a.v6, 6,
+                                     tcp, tcp_len + chunk_len);
+
+        write(e->tun_fd, pkt, (size_t)total);
+
+        if (offset == 0 && (chunk_flags & TF_SYN)) s->our_seq++;
+        s->our_seq += (uint32_t)chunk_len;
+        if ((offset + chunk_len == pay_len) && (chunk_flags & TF_FIN)) s->our_seq++;
+
+        offset += chunk_len;
+    } while (offset < pay_len);
 }
 
 static void write_tcp(engine_t *e, tcp_session_t *s,
