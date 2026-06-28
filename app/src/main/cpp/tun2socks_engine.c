@@ -635,23 +635,31 @@ static void handle_socket_event(engine_t *e, int fd, uint32_t events) {
             return;
         }
 
-        /* Gate read by available download tokens to enforce the cap.
-         * Previously we read up to 65 KB then slept — now we only
-         * read what the bucket allows, so pacing is smooth.          */
-        int64_t avail = rate_limiter_available(&e->dl_limiter);
-        if (avail <= 0) {
-            e->dl_starved = 1;   /* main loop will yield */
-            pthread_mutex_unlock(&e->tcp_lock);
-            return;
-        }
+        /* ---- Rate-limited download read ----------------------------- *
+         * When a cap is active (rate_per_sec > 0) we limit the recv()
+         * size to what the token bucket allows.  This produces smooth
+         * pacing instead of the old blast-then-sleep pattern.
+         *
+         * When no cap is set (rate_per_sec == 0 → unlimited), we read
+         * the full buffer with no throttling at all.                    */
         size_t max_read = sizeof(buf);
-        if (avail < (int64_t)max_read) max_read = (size_t)avail;
+        if (e->dl_limiter.rate_per_sec > 0) {
+            int64_t avail = rate_limiter_available(&e->dl_limiter);
+            if (avail > 0 && avail < (int64_t)max_read)
+                max_read = (size_t)avail;
+            else if (avail <= 0)
+                max_read = 1500;            /* 1 MTU: keep things moving */
+        }
 
         int n = (int)recv(fd, buf, max_read, 0);
         if (n > 0) {
             ts->last_active = time(NULL);
             int small = (n <= SMALL_PKT_THRESHOLD);
-            rate_limiter_consume(&e->dl_limiter, n, small);
+            int64_t wait = rate_limiter_consume(&e->dl_limiter, n, small);
+            if (wait > 0 && wait <= 2000)
+                usleep(2000);               /* batch tiny waits to 2 ms  */
+            else if (wait > 2000)
+                usleep((useconds_t)(wait < 5000 ? wait : 5000)); /* cap 5 ms */
             __sync_fetch_and_add(&e->dl_bytes, n);
             write_tcp(e, ts, TF_PSH | TF_ACK, buf, n);
         } else if (n == 0) {
@@ -673,20 +681,24 @@ static void handle_socket_event(engine_t *e, int fd, uint32_t events) {
     pthread_mutex_lock(&e->udp_lock);
     udp_session_t *us = udp_find_by_fd(e, fd);
     if (us && (events & EPOLLIN)) {
-        int64_t avail = rate_limiter_available(&e->dl_limiter);
-        if (avail <= 0) {
-            e->dl_starved = 1;
-            pthread_mutex_unlock(&e->udp_lock);
-            return;
-        }
         size_t max_read = sizeof(buf);
-        if (avail < (int64_t)max_read) max_read = (size_t)avail;
+        if (e->dl_limiter.rate_per_sec > 0) {
+            int64_t avail = rate_limiter_available(&e->dl_limiter);
+            if (avail > 0 && avail < (int64_t)max_read)
+                max_read = (size_t)avail;
+            else if (avail <= 0)
+                max_read = 1500;
+        }
 
         int n = (int)recv(fd, buf, max_read, 0);
         if (n > 0) {
             us->last_active = time(NULL);
             int small = (n <= SMALL_PKT_THRESHOLD);
-            rate_limiter_consume(&e->dl_limiter, n, small);
+            int64_t wait = rate_limiter_consume(&e->dl_limiter, n, small);
+            if (wait > 0 && wait <= 2000)
+                usleep(2000);
+            else if (wait > 2000)
+                usleep((useconds_t)(wait < 5000 ? wait : 5000));
             __sync_fetch_and_add(&e->dl_bytes, n);
 
             if (us->src.version == 4)
@@ -807,14 +819,8 @@ static void *engine_loop(void *arg) {
             }
         }
 
-        /* When the download bucket is empty, yield for 2 ms.
-         * This prevents busy-spinning (level-triggered epoll would
-         * otherwise fire continuously for sockets with buffered
-         * data) while letting tokens refill smoothly.               */
-        if (e->dl_starved) {
-            e->dl_starved = 0;
-            usleep(2000);
-        }
+        /* Rate-limit pacing is now handled per-socket via recv()
+         * size limiting + short usleep(), so no global yield needed. */
 
         /* periodic session cleanup */
         time_t now = time(NULL);
